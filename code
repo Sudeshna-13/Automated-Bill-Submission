@@ -1,0 +1,804 @@
+import { useState, useEffect, useRef } from "react";
+
+const MOCK_USERS = [
+  { id:"u1", name:"Ravi Kumar",     email:"ravi@company.com",     role:"client",   company:"Kumar Traders",    password:"client123"   },
+  { id:"u2", name:"Sunita Sharma",  email:"sunita@company.com",   role:"supplier", company:"Sharma Logistics", password:"supplier123" },
+  { id:"u3", name:"Accounts Dept",  email:"accounts@company.com", role:"accounts", company:"Internal",         password:"acc123"      },
+  { id:"u4", name:"Rajesh Manager", email:"manager@company.com",  role:"manager",  company:"Internal",         password:"mgr123"      },
+  { id:"u5", name:"MD Sir",         email:"md@company.com",       role:"md",       company:"Internal",         password:"md123"       },
+];
+
+const THRESHOLDS = { manager: 50000, md: 100000 };
+const ROLE_LABEL = { accounts:"Accounts Dept", manager:"Manager", md:"Managing Director" };
+
+function getApprovalChain(amount) {
+  const c = ["accounts"];
+  if (amount > THRESHOLDS.manager) c.push("manager");
+  if (amount > THRESHOLDS.md)      c.push("md");
+  return c;
+}
+function getChainLabel(amount) {
+  const a = parseFloat(amount)||0;
+  if (a > THRESHOLDS.md)      return "Accounts → Manager → MD";
+  if (a > THRESHOLDS.manager) return "Accounts → Manager";
+  return "Accounts only";
+}
+
+let _bills = [];
+let _notifs = [];
+const getBills  = () => _bills;
+const saveBills = bs => { _bills = bs; };
+const getNS     = () => _notifs;
+const pushN = (roleOrUserId, msg, billId, byUserId=false) => {
+  _notifs = [{ id: Date.now() + Math.random(), toRole: byUserId?null:roleOrUserId, toUserId: byUserId?roleOrUserId:null, message: msg, billId, read: false, ts: new Date().toISOString() }, ..._notifs];
+};
+const markRead = id => { _notifs = _notifs.map(n => n.id===id ? {...n, read:true} : n); };
+const genId = () => "BILL-" + Date.now().toString(36).toUpperCase();
+
+// ── Theme tokens ──────────────────────────────────────────────
+const DARK = {
+  bg:"#0d0c0a", surface:"#161410", border:"#2e2820", gold:"#d4a853", goldDim:"#8a6b30",
+  green:"#52b788", red:"#e85d5d", blue:"#6baed6", text:"#e8e0d0", muted:"#7a6e60",
+  faint:"#3a3228", inputBg:"#0d0c0a", inputLockBg:"#130f0a", inputLockBorder:"#2a1f10",
+  navBg:"#0f0d0b", rowHover:"#1a1612", statBorder:"#1a1612",
+};
+const LIGHT = {
+  bg:"#f5f2ed", surface:"#ffffff", border:"#d8cfc4", gold:"#b07d2a", goldDim:"#8a6020",
+  green:"#2d7a55", red:"#c0392b", blue:"#2471a3", text:"#1a1410", muted:"#6b5f52",
+  faint:"#e0d8ce", inputBg:"#faf8f5", inputLockBg:"#fdf6e8", inputLockBorder:"#d4b870",
+  navBg:"#ede8e1", rowHover:"#f0ece6", statBorder:"#e8e0d6",
+};
+
+function makeStyles(C) {
+  return {
+    app:        { fontFamily:"'Georgia',serif", background:C.bg, minHeight:"100vh", color:C.text, transition:"background .25s,color .25s" },
+    loginWrap:  { display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:"20px" },
+    loginCard:  { background:C.surface, border:`1px solid ${C.border}`, borderRadius:"6px", padding:"52px 44px", width:"100%", maxWidth:"420px", boxShadow:"0 40px 100px rgba(0,0,0,.15)" },
+    label:      { display:"block", fontSize:"11px", letterSpacing:".13em", textTransform:"uppercase", color:C.muted, marginBottom:"8px" },
+    input:      { width:"100%", background:C.inputBg, border:`1px solid ${C.border}`, borderRadius:"3px", padding:"12px 14px", color:C.text, fontSize:"15px", outline:"none", boxSizing:"border-box", fontFamily:"inherit" },
+    inputLock:  { width:"100%", background:C.inputLockBg, border:`1px solid ${C.inputLockBorder}`, borderRadius:"3px", padding:"12px 14px", color:C.gold, fontSize:"15px", outline:"none", boxSizing:"border-box", fontFamily:"inherit", cursor:"not-allowed" },
+    btnPrimary: { width:"100%", background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, border:"none", borderRadius:"3px", padding:"14px", color:"#fff", fontSize:"14px", fontWeight:"700", letterSpacing:".08em", textTransform:"uppercase", cursor:"pointer" },
+    nav:        { background:C.navBg, borderBottom:`1px solid ${C.border}`, padding:"0 24px", display:"flex", alignItems:"center", justifyContent:"space-between", height:"60px", position:"sticky", top:0, zIndex:100, transition:"background .25s" },
+    navBrand:   { fontSize:"18px", fontWeight:"600", color:C.gold },
+    badge:      c => ({ background:c==="gold"?`${C.gold}28`:c==="green"?`${C.green}28`:c==="red"?`${C.red}28`:c==="blue"?`${C.blue}28`:C.faint, color:c==="gold"?C.gold:c==="green"?C.green:c==="red"?C.red:c==="blue"?C.blue:C.muted, padding:"3px 10px", borderRadius:"20px", fontSize:"11px", fontWeight:"600", letterSpacing:".08em", textTransform:"uppercase" }),
+    main:       { maxWidth:"1160px", margin:"0 auto", padding:"32px 24px" },
+    pageTitle:  { fontSize:"28px", fontWeight:"600", color:C.gold, marginBottom:"4px" },
+    pageSub:    { fontSize:"14px", color:C.muted, marginBottom:"32px" },
+    card:       { background:C.surface, border:`1px solid ${C.border}`, borderRadius:"4px", padding:"24px" },
+    statCard:   c => ({ background:C.surface, border:`1px solid ${c}38`, borderRadius:"4px", padding:"20px 24px", borderLeft:`3px solid ${c}` }),
+    statNum:    { fontSize:"32px", fontWeight:"700", color:C.text, lineHeight:1 },
+    statLbl:    { fontSize:"12px", color:C.muted, letterSpacing:".1em", textTransform:"uppercase", marginTop:"6px" },
+    table:      { width:"100%", borderCollapse:"collapse" },
+    th:         { textAlign:"left", fontSize:"11px", letterSpacing:".12em", textTransform:"uppercase", color:C.muted, padding:"10px 16px", borderBottom:`1px solid ${C.border}` },
+    td:         { padding:"14px 16px", borderBottom:`1px solid ${C.statBorder}`, fontSize:"14px", verticalAlign:"middle" },
+    btnSm:      c => ({ background:c==="gold"?C.gold:c==="green"?C.green:c==="red"?C.red:C.faint, color:c==="gold"||c==="green"||c==="red"?"#fff":C.text, border:"none", borderRadius:"3px", padding:"7px 14px", fontSize:"12px", fontWeight:"600", cursor:"pointer", letterSpacing:".05em" }),
+    zone:       { border:`2px dashed ${C.border}`, borderRadius:"4px", padding:"40px", textAlign:"center", cursor:"pointer", transition:"all .2s" },
+    modal:      { position:"fixed", inset:0, background:"rgba(0,0,0,.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:"20px" },
+    modalCard:  { background:C.surface, border:`1px solid ${C.border}`, borderRadius:"4px", width:"100%", maxWidth:"480px", maxHeight:"90vh", overflow:"auto", padding:"32px" },
+    alert:      t => ({ background:t==="error"?`${C.red}12`:t==="success"?`${C.green}12`:t==="warn"?`${C.gold}12`:`${C.blue}12`, border:`1px solid ${t==="error"?C.red+"40":t==="success"?C.green+"40":t==="warn"?C.gold+"40":C.blue+"40"}`, borderRadius:"3px", padding:"12px 16px", fontSize:"13px", color:t==="error"?C.red:t==="success"?C.green:t==="warn"?C.gold:C.blue, marginBottom:"16px" }),
+    lockTag:    { fontSize:"10px", background:`${C.gold}22`, color:C.goldDim, padding:"2px 7px", borderRadius:"10px", marginLeft:"6px", letterSpacing:".05em", verticalAlign:"middle" },
+    themeBtn:   { background:C.faint, border:`1px solid ${C.border}`, borderRadius:"20px", padding:"5px 12px", fontSize:"13px", cursor:"pointer", color:C.text, display:"flex", alignItems:"center", gap:"6px", transition:"all .2s" },
+  };
+}
+
+async function scanBill(base64, mime) {
+  const isPDF = mime === "application/pdf";
+  const docBlock = isPDF
+    ? { type:"document", source:{ type:"base64", media_type:"application/pdf", data: base64 } }
+    : { type:"image",    source:{ type:"base64", media_type: mime,              data: base64 } };
+  const promptText = isPDF
+    ? `You are a strict corporate expense bill validator reading a PDF document.\n\nSTEP 1 — DOCUMENT TYPE CHECK:\nIf not a bill/invoice/receipt → respond ONLY:\n{"error":"NOT_BILL","message":"This does not appear to be a valid expense bill or invoice."}\n\nSTEP 2 — EXTRACT:\nRespond ONLY with JSON:\n{"vendor":"<name>","date":"<DD/MM/YYYY>","amount":<number>,"category":"<Fuel/Transport|Travel/Hotel|Repair/Maintenance|Courier/Logistics|Office Supplies|Utilities|Other>","gst":"<or null>","invoice_no":"<or null>","confidence":"<high|medium|low>"}`
+    : `You are a strict corporate expense bill validator.\n\nSTEP 1 — BLUR CHECK: If too blurry/dark → {"error":"BLURRY","message":"Bill image is too blurry or poorly lit."}\nSTEP 2 — HANDWRITING CHECK: If handwritten → {"error":"HANDWRITTEN","message":"Handwritten bills are not accepted."}\nSTEP 3 — DOC TYPE: If not a bill → {"error":"NOT_BILL","message":"Not a valid bill."}\nSTEP 4 — EXTRACT:\n{"vendor":"<name>","date":"<DD/MM/YYYY>","amount":<number>,"category":"<Fuel/Transport|Travel/Hotel|Repair/Maintenance|Courier/Logistics|Office Supplies|Utilities|Other>","gst":"<or null>","invoice_no":"<or null>","confidence":"<high|medium|low>"}`;
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, messages:[{ role:"user", content:[docBlock,{type:"text",text:promptText}] }] })
+  });
+  const data = await res.json();
+  const raw = data.content?.find(b=>b.type==="text")?.text || "{}";
+  try { return JSON.parse(raw.replace(/```json|```/g,"").trim()); }
+  catch { return { error:"PARSE_ERROR", message:"Could not parse response." }; }
+}
+
+async function wordToBase64(file) {
+  const ab = await file.arrayBuffer();
+  const str = new TextDecoder("utf-8",{fatal:false}).decode(new Uint8Array(ab));
+  const tags = str.match(/<w:t[^>]*>([^<]+)<\/w:t>/g) || [];
+  const text = tags.map(t=>t.replace(/<[^>]+>/g,"")).join(" ") || file.name;
+  const canvas = document.createElement("canvas");
+  canvas.width=800; canvas.height=1100;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,800,1100);
+  ctx.fillStyle="#111111"; ctx.font="15px Arial";
+  let line="", y=40;
+  text.split(" ").forEach(w => { const t=line+w+" "; if(ctx.measureText(t).width>760&&line){ctx.fillText(line,20,y);line=w+" ";y+=22;}else line=t; });
+  ctx.fillText(line,20,y);
+  return canvas.toDataURL("image/jpeg",0.9).split(",")[1];
+}
+
+// ── Locked Field ──────────────────────────────────────────────
+function LockedField({ label, value, S, C }) {
+  return (
+    <div>
+      <label style={S.label}>{label}<span style={S.lockTag}>🔒 AI-locked</span></label>
+      <input style={S.inputLock} value={value ?? "—"} readOnly tabIndex={-1} />
+    </div>
+  );
+}
+
+// ── Theme Toggle Button ───────────────────────────────────────
+function ThemeToggle({ dark, onToggle, S }) {
+  return (
+    <button style={S.themeBtn} onClick={onToggle} title="Toggle theme">
+      {dark ? "☀️" : "🌙"} {dark ? "Light" : "Dark"}
+    </button>
+  );
+}
+
+// ── Login ─────────────────────────────────────────────────────
+function LoginPage({ onLogin, dark, onToggleTheme }) {
+  const C = dark ? DARK : LIGHT;
+  const S = makeStyles(C);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const attempt = () => {
+    setLoading(true); setError("");
+    setTimeout(() => {
+      const u = MOCK_USERS.find(x => x.email===email.trim().toLowerCase() && x.password===password);
+      if (u) onLogin(u);
+      else setError("Access denied. Your email is not registered. Contact your administrator.");
+      setLoading(false);
+    }, 700);
+  };
+
+  return (
+    <div style={{...S.loginWrap, position:"relative"}}>
+      <div style={{ position:"absolute", top:"20px", right:"20px" }}>
+        <ThemeToggle dark={dark} onToggle={onToggleTheme} S={S} />
+      </div>
+      <div style={S.loginCard}>
+        <div style={{ textAlign:"center", marginBottom:"40px" }}>
+          <div style={{ fontSize:"40px", marginBottom:"10px" }}>📋</div>
+          <h1 style={{ fontSize:"26px", fontWeight:"600", color:C.gold, margin:0 }}>ExpenseTrack</h1>
+          <p style={{ fontSize:"12px", color:C.muted, letterSpacing:".15em", textTransform:"uppercase", marginTop:"6px" }}>Bill Approval System</p>
+        </div>
+        <div style={{ marginBottom:"18px" }}>
+          <label style={S.label}>Company Email</label>
+          <input style={S.input} type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="yourname@company.com" onKeyDown={e=>e.key==="Enter"&&attempt()} />
+        </div>
+        <div style={{ marginBottom:"28px" }}>
+          <label style={S.label}>Password</label>
+          <input style={S.input} type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e=>e.key==="Enter"&&attempt()} />
+        </div>
+        {error && <div style={S.alert("error")}>{error}</div>}
+        <button style={S.btnPrimary} onClick={attempt} disabled={loading}>{loading ? "Verifying access…" : "Sign In →"}</button>
+        <p style={{ textAlign:"center", fontSize:"12px", color:C.muted, marginTop:"28px", lineHeight:1.6 }}>
+          Access is restricted to registered clients, suppliers, and internal staff only.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Notif Bell ────────────────────────────────────────────────
+function NotifBell({ user, onNavigate, tick, S, C }) {
+  const [open, setOpen] = useState(false);
+  const [notifs, setNotifs] = useState([]);
+
+  useEffect(() => {
+    setNotifs(getNS().filter(n => n.toRole===user.role || n.toUserId===user.id));
+  }, [user.role, tick]);
+
+  const unread = notifs.filter(n=>!n.read).length;
+  const click = n => {
+    markRead(n.id);
+    setNotifs(prev=>prev.map(x=>x.id===n.id?{...x,read:true}:x));
+    setOpen(false);
+    onNavigate("bills", n.billId);
+  };
+
+  return (
+    <div style={{ position:"relative" }}>
+      <button style={{ ...S.btnSm(""), padding:"7px 12px", position:"relative" }} onClick={()=>setOpen(o=>!o)}>
+        🔔
+        {unread>0 && <span style={{ position:"absolute", top:"-5px", right:"-5px", background:C.red, color:"#fff", borderRadius:"50%", width:"16px", height:"16px", fontSize:"10px", fontWeight:"700", display:"flex", alignItems:"center", justifyContent:"center" }}>{unread}</span>}
+      </button>
+      {open && (
+        <div style={{ position:"absolute", right:0, top:"44px", background:C.surface, border:`1px solid ${C.border}`, borderRadius:"4px", width:"360px", zIndex:300, boxShadow:"0 20px 50px rgba(0,0,0,.2)", maxHeight:"420px", overflow:"auto" }}>
+          <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, fontSize:"12px", color:C.muted, letterSpacing:".1em", textTransform:"uppercase", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            Notifications {unread>0 && <span style={S.badge("red")}>{unread} new</span>}
+          </div>
+          {notifs.length===0
+            ? <div style={{ padding:"28px", textAlign:"center", color:C.muted, fontSize:"13px" }}>No notifications yet</div>
+            : notifs.map(n => (
+              <div key={n.id} onClick={()=>click(n)} style={{ padding:"12px 16px", cursor:"pointer", borderBottom:`1px solid ${C.statBorder}`, background:n.read?"transparent":`${C.gold}07` }}>
+                <div style={{ fontSize:"13px", color:n.read?C.muted:C.text, marginBottom:"4px" }}>{n.message}</div>
+                <div style={{ fontSize:"11px", color:C.muted }}>{new Date(n.ts).toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+              </div>
+            ))
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Upload Bill ───────────────────────────────────────────────
+function UploadBill({ user, onBillSubmitted, S, C }) {
+  const [step, setStep] = useState("upload");
+  const [imgPreview, setImgPreview] = useState(null);
+  const [imgBase64, setImgBase64] = useState(null);
+  const [imgMime, setImgMime] = useState(null);
+  const [fileName, setFileName] = useState("");
+  const [ocrData, setOcrData] = useState(null);
+  const [ocrError, setOcrError] = useState(null);
+  const [notes, setNotes] = useState("");
+  const [submitErr, setSubmitErr] = useState("");
+  const [dupBill, setDupBill] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileRef = useRef();
+
+  const WORD_TYPES = ["application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/msword"];
+  const isWord = t => WORD_TYPES.includes(t);
+
+  const handleFile = async file => {
+    if (!file) return;
+    const ext = "."+file.name.split(".").pop().toLowerCase();
+    const allowed = ["image/jpeg","image/jpg","image/png","image/webp","image/gif","application/pdf",...WORD_TYPES];
+    if (!allowed.includes(file.type) && ![".jpg",".jpeg",".png",".webp",".gif",".pdf",".doc",".docx"].includes(ext)) { setOcrError("Unsupported format."); return; }
+    setOcrError(null); setFileName(file.name);
+    if (isWord(file.type)||ext===".doc"||ext===".docx") {
+      setStep("converting");
+      try { const b64=await wordToBase64(file); setImgPreview("data:image/jpeg;base64,"+b64); setImgBase64(b64); setImgMime("image/jpeg"); setStep("upload"); }
+      catch { setOcrError("Could not read Word file."); setStep("upload"); }
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => { const d=e.target.result; setImgPreview(d); setImgBase64(d.split(",")[1]); setImgMime(file.type); setStep("upload"); };
+    reader.readAsDataURL(file);
+  };
+
+  const checkDuplicate = r => {
+    const inVendor=(r.vendor||"").trim().toLowerCase(), inAmount=parseFloat(r.amount)||0, inDate=(r.date||"").trim(), inInvoice=(r.invoice_no||"").trim().toLowerCase();
+    return getBills().find(b => {
+      const bVendor=(b.vendor||"").trim().toLowerCase(), bAmount=parseFloat(b.amount)||0, bDate=(b.date||"").trim(), bInvoice=(b.invoiceNo||"").trim().toLowerCase();
+      if (inInvoice&&bInvoice) return bInvoice===inInvoice&&bAmount===inAmount;
+      return bVendor===inVendor&&bAmount===inAmount&&bDate===inDate;
+    }) || null;
+  };
+
+  const analyze = async () => {
+    if (!imgBase64) return;
+    setStep("analyzing"); setOcrError(null);
+    try {
+      const r = await scanBill(imgBase64, imgMime||"image/jpeg");
+      if (r.error==="BLURRY"||r.error==="HANDWRITTEN"||r.error==="NOT_BILL") { setOcrError(r.message); setStep("upload"); setImgPreview(null); setImgBase64(null); return; }
+      if (!r.error) { const dup=checkDuplicate(r); if (dup) { setDupBill(dup); setStep("upload"); setImgPreview(null); setImgBase64(null); return; } }
+      setOcrData(r.error?null:r); setStep("form");
+    } catch { setOcrData(null); setStep("form"); }
+  };
+
+  const submit = () => {
+    if (!ocrData?.amount||!ocrData?.vendor||!ocrData?.category) { setSubmitErr("Required fields missing."); return; }
+    setStep("submitting");
+    const amount=parseFloat(ocrData.amount), chain=getApprovalChain(amount);
+    const bill = { id:genId(), submittedBy:user.id, submittedByName:user.name, submittedByCompany:user.company, vendor:ocrData.vendor, date:ocrData.date||new Date().toLocaleDateString("en-IN"), amount, category:ocrData.category, gst:ocrData.gst||null, invoiceNo:ocrData.invoice_no||null, notes, imagePreview:imgPreview, fileName, status:"pending", approvalChain:chain, currentStep:0, timeline:[{action:"submitted",by:user.name,role:user.role,timestamp:new Date().toISOString(),comment:`Bill submitted. ₹${amount.toLocaleString("en-IN")} | ${ocrData.category} | Chain: ${chain.map(r=>ROLE_LABEL[r]).join(" → ")}`}], createdAt:new Date().toISOString(), ocrConfidence:ocrData.confidence||"low" };
+    const bills=getBills(); bills.unshift(bill); saveBills(bills);
+    pushN(chain[0], `🧾 New bill from ${user.name} (${user.company}): ₹${amount.toLocaleString("en-IN")} | ${ocrData.category} — needs your approval.`, bill.id);
+    setTimeout(()=>{ setStep("done"); onBillSubmitted(); }, 600);
+  };
+
+  const reset = () => { setStep("upload"); setImgPreview(null); setImgBase64(null); setOcrData(null); setOcrError(null); setNotes(""); setSubmitErr(""); setFileName(""); setDupBill(null); };
+
+  if (step==="done") return (
+    <div style={{...S.card,textAlign:"center",padding:"64px 40px"}}>
+      <div style={{fontSize:"52px",marginBottom:"16px"}}>✅</div>
+      <h2 style={{color:C.green,marginBottom:"10px"}}>Bill Submitted Successfully</h2>
+      <p style={{color:C.muted,marginBottom:"6px"}}><strong style={{color:C.gold}}>Accounts Dept</strong> has been notified.</p>
+      <button style={{...S.btnSm("gold"),marginTop:"28px",padding:"12px 32px"}} onClick={reset}>Submit Another Bill</button>
+    </div>
+  );
+
+  if (["analyzing","converting","submitting"].includes(step)) return (
+    <div style={{...S.card,textAlign:"center",padding:"64px 40px"}}>
+      <div style={{fontSize:"48px",marginBottom:"16px"}}>{step==="analyzing"?"🔍":step==="converting"?"📄":"⏳"}</div>
+      <h2 style={{color:C.gold,marginBottom:"8px"}}>{step==="analyzing"?"Scanning Bill with AI…":step==="converting"?"Converting Word Document…":"Submitting…"}</h2>
+      <p style={{color:C.muted}}>{step==="analyzing"?"Checking quality, detecting handwriting, extracting details…":"Please wait…"}</p>
+    </div>
+  );
+
+  return (
+    <div>
+      <h1 style={S.pageTitle}>Upload Expense Bill</h1>
+      <p style={S.pageSub}>Accepted: JPG · PNG · WebP · GIF · PDF · DOC · DOCX &nbsp;|&nbsp; ⚠️ Printed bills only</p>
+      <div style={{ display:"grid", gridTemplateColumns:step==="form"?"1fr 1fr":"1fr", gap:"24px", maxWidth:step==="form"?"100%":"580px" }}>
+        <div style={S.card}>
+          <h3 style={{color:C.gold,fontSize:"15px",marginBottom:"18px"}}>📎 Bill Document</h3>
+          {ocrError && !dupBill && <div style={{whiteSpace:"pre-line",...S.alert("error")}}>{ocrError}</div>}
+          {dupBill && (
+            <div style={{background:`${C.red}10`,border:`1px solid ${C.red}40`,borderRadius:"4px",padding:"20px",marginBottom:"16px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"14px"}}>
+                <span style={{fontSize:"28px"}}>🚫</span>
+                <div><div style={{fontSize:"15px",fontWeight:"700",color:C.red}}>Duplicate Bill — Cannot Be Uploaded</div><div style={{fontSize:"12px",color:C.muted,marginTop:"2px"}}>This bill already exists in the system</div></div>
+              </div>
+              <div style={{background:C.bg,borderRadius:"3px",padding:"14px",fontSize:"13px"}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}}>
+                  {[["Existing Bill ID",dupBill.id],["Vendor",dupBill.vendor],["Amount",`₹${parseFloat(dupBill.amount).toLocaleString("en-IN")}`],["Date",dupBill.date],["Status",dupBill.status.toUpperCase()],["Category",dupBill.category]].map(([k,v])=>(
+                    <div key={k}><div style={{fontSize:"10px",color:C.muted,letterSpacing:".08em",textTransform:"uppercase",marginBottom:"2px"}}>{k}</div><div style={{color:k==="Existing Bill ID"?C.gold:C.text}}>{v}</div></div>
+                  ))}
+                </div>
+              </div>
+              <p style={{fontSize:"12px",color:C.muted,marginTop:"12px",marginBottom:0}}>Contact Accounts Dept if this is a different transaction.</p>
+            </div>
+          )}
+          {!imgPreview ? (
+            <div style={{...S.zone,borderColor:dragOver?C.gold:C.border,background:dragOver?`${C.gold}06`:"transparent"}}
+              onDragOver={e=>{e.preventDefault();setDragOver(true)}} onDragLeave={()=>setDragOver(false)}
+              onDrop={e=>{e.preventDefault();setDragOver(false);handleFile(e.dataTransfer.files[0])}} onClick={()=>fileRef.current?.click()}>
+              <div style={{fontSize:"44px",marginBottom:"14px"}}>📄</div>
+              <p style={{color:C.muted,margin:0,fontSize:"15px"}}>Drag & drop or click to upload</p>
+              <div style={{marginTop:"16px",display:"flex",gap:"8px",justifyContent:"center",flexWrap:"wrap"}}>
+                {["JPG","PNG","WebP","GIF","PDF","DOC","DOCX"].map(f=><span key={f} style={{...S.badge(""),fontSize:"10px",padding:"2px 8px"}}>{f}</span>)}
+              </div>
+              <p style={{color:C.muted,fontSize:"12px",marginTop:"14px"}}>🚫 Handwritten bills will be rejected automatically</p>
+              <input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])} />
+            </div>
+          ) : (
+            <div>
+              {fileName && <p style={{fontSize:"12px",color:C.muted,marginBottom:"10px"}}>📁 {fileName}</p>}
+              {imgMime==="application/pdf"
+                ? <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:"3px",padding:"24px",textAlign:"center"}}>
+                    <div style={{fontSize:"48px",marginBottom:"10px"}}>📄</div>
+                    <div style={{fontSize:"14px",color:C.text,fontWeight:"600",marginBottom:"4px"}}>{fileName}</div>
+                    <div style={{fontSize:"12px",color:C.muted}}>PDF ready — click Scan with AI</div>
+                  </div>
+                : <img src={imgPreview} alt="bill preview" style={{width:"100%",borderRadius:"3px",maxHeight:"340px",objectFit:"contain",background:C.bg,border:`1px solid ${C.border}`}} />
+              }
+              <div style={{display:"flex",gap:"8px",marginTop:"12px"}}>
+                {step==="upload"&&<button style={{...S.btnSm("gold"),flex:1,padding:"10px"}} onClick={analyze}>🔍 Scan with AI</button>}
+                <button style={{...S.btnSm(""),padding:"10px 16px"}} onClick={reset}>✕ Remove</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {step==="form" && (
+          <div style={S.card}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"6px"}}>
+              <h3 style={{color:C.gold,fontSize:"15px",margin:0}}>📝 Extracted Details</h3>
+              {ocrData && <span style={S.badge(ocrData.confidence==="high"?"green":ocrData.confidence==="medium"?"gold":"red")}>{ocrData.confidence} confidence</span>}
+            </div>
+            {ocrData
+              ? <div style={{...S.alert("success"),marginBottom:"18px"}}>✅ AI extracted your bill details. All fields are <strong>locked</strong> to prevent tampering.</div>
+              : <div style={{...S.alert("error"),marginBottom:"18px"}}>⚠️ AI could not extract data. Please re-upload a clearer printed bill.</div>
+            }
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"14px"}}>
+              <LockedField label="Vendor Name" value={ocrData?.vendor} S={S} C={C} />
+              <LockedField label="Bill Date"   value={ocrData?.date}   S={S} C={C} />
+              <LockedField label="Amount (₹)"  value={ocrData?.amount} S={S} C={C} />
+              <LockedField label="Category"    value={ocrData?.category} S={S} C={C} />
+              <LockedField label="GST Number"  value={ocrData?.gst||"—"} S={S} C={C} />
+              <LockedField label="Invoice No." value={ocrData?.invoice_no||"—"} S={S} C={C} />
+            </div>
+            <div style={{marginTop:"16px"}}>
+              <label style={S.label}>Additional Notes<span style={{...S.lockTag,background:`${C.green}18`,color:C.green,marginLeft:"6px"}}>✏️ Editable</span></label>
+              <textarea style={{...S.input,minHeight:"80px",resize:"vertical"}} value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Optional: trip reference, PO number…" />
+            </div>
+            {ocrData?.amount && (
+              <div style={{...S.alert("info"),marginTop:"14px"}}>
+                <strong>🔗 Routing:</strong> {getChainLabel(ocrData.amount)}<br />
+                <span style={{fontSize:"12px",opacity:.8}}>{getApprovalChain(parseFloat(ocrData.amount)).map(r=>ROLE_LABEL[r]).join(" → ")} — each notified only after previous approves</span>
+              </div>
+            )}
+            {submitErr && <div style={S.alert("error")}>{submitErr}</div>}
+            <button style={{...S.btnPrimary,marginTop:"20px",opacity:ocrData?1:.35}} onClick={submit} disabled={!ocrData}>Submit for Approval →</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Bills List ────────────────────────────────────────────────
+function BillsList({ user, onViewBill, refreshKey, highlightId, S, C }) {
+  const [bills, setBills] = useState([]);
+  const [filter, setFilter] = useState("all");
+
+  useEffect(()=>{ const all=getBills(); setBills(["client","supplier"].includes(user.role)?all.filter(b=>b.submittedBy===user.id):all); },[user,refreshKey]);
+
+  const filtered = filter==="all"?bills:bills.filter(b=>b.status===filter);
+  const cnt = k => bills.filter(b=>k==="all"||b.status===k).length;
+  const sc  = s => s==="approved"?"green":s==="rejected"?"red":"gold";
+
+  return (
+    <div>
+      <h1 style={S.pageTitle}>Expense Bills</h1>
+      <p style={S.pageSub}>Real-time tracking of all submitted bills and their approval stages</p>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"16px",marginBottom:"24px"}}>
+        {[["all","Total",C.gold],["pending","Pending",C.gold],["approved","Approved",C.green],["rejected","Rejected",C.red]].map(([k,l,c])=>(
+          <div key={k} style={{...S.statCard(c),cursor:"pointer",opacity:filter===k?1:.55}} onClick={()=>setFilter(k)}>
+            <div style={S.statNum}>{cnt(k)}</div><div style={S.statLbl}>{l}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:"8px",marginBottom:"16px"}}>
+        {["all","pending","approved","rejected"].map(f=>(
+          <button key={f} style={{...S.btnSm(f===filter?"gold":""),textTransform:"capitalize"}} onClick={()=>setFilter(f)}>{f}</button>
+        ))}
+      </div>
+      <div style={S.card}>
+        {filtered.length===0
+          ? <div style={{textAlign:"center",padding:"44px",color:C.muted}}>No bills found.</div>
+          : <table style={S.table}>
+              <thead><tr>{["Bill ID","Vendor","Amount","Category","Submitted By","Journey","Status",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>
+                {filtered.map(b=>(
+                  <tr key={b.id} onClick={()=>onViewBill(b.id)} style={{cursor:"pointer",background:b.id===highlightId?`${C.gold}07`:"transparent"}}>
+                    <td style={{...S.td,fontFamily:"monospace",fontSize:"12px",color:C.gold}}>{b.id}</td>
+                    <td style={S.td}>{b.vendor}</td>
+                    <td style={{...S.td,fontWeight:"700"}}>₹{parseFloat(b.amount).toLocaleString("en-IN")}</td>
+                    <td style={S.td}><span style={S.badge("")}>{b.category}</span></td>
+                    <td style={{...S.td,fontSize:"13px"}}>{b.submittedByName}<br/><span style={{color:C.muted,fontSize:"11px"}}>{b.submittedByCompany}</span></td>
+                    <td style={S.td}>
+                      <div style={{display:"flex",alignItems:"center",gap:"4px"}}>
+                        {b.approvalChain.map((role,ci)=>{
+                          const done=b.status==="approved"||(b.status==="pending"&&ci<b.currentStep);
+                          const cur=b.status==="pending"&&ci===b.currentStep;
+                          const rej=b.status==="rejected"&&ci===b.currentStep;
+                          const dotC=done?C.green:cur?C.gold:rej?C.red:C.faint;
+                          return (<div key={role} style={{display:"flex",alignItems:"center",gap:"4px"}}>
+                            <div title={ROLE_LABEL[role]} style={{width:"10px",height:"10px",borderRadius:"50%",background:dotC,flexShrink:0}} />
+                            {ci<b.approvalChain.length-1&&<div style={{width:"12px",height:"1px",background:done?C.green:C.border}} />}
+                          </div>);
+                        })}
+                        <span style={{fontSize:"11px",color:b.status==="approved"?C.green:b.status==="rejected"?C.red:C.gold,marginLeft:"6px",whiteSpace:"nowrap"}}>
+                          {b.status==="pending"?ROLE_LABEL[b.approvalChain[b.currentStep]]:b.status==="approved"?"Done":"Rejected"}
+                        </span>
+                      </div>
+                    </td>
+                    <td style={S.td}><span style={S.badge(sc(b.status))}>{b.status}</span></td>
+                    <td style={S.td}><button style={S.btnSm("gold")} onClick={e=>{e.stopPropagation();onViewBill(b.id);}}>View →</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+        }
+      </div>
+    </div>
+  );
+}
+
+// ── Bill Tracker ──────────────────────────────────────────────
+function BillTracker({ bill, S, C }) {
+  if (!bill) return null;
+  const allSteps = [{ key:"submitted", label:"Submitted", role:null, icon:"📤" }, ...bill.approvalChain.map(r=>({ key:r, label:ROLE_LABEL[r], role:r, icon:r==="accounts"?"🏦":r==="manager"?"👔":"🏛️" }))];
+  const getState = (step, idx) => {
+    if (step.key==="submitted") return "done";
+    const ci=idx-1;
+    if (bill.status==="approved") return "done";
+    if (bill.status==="rejected") { if(ci<bill.currentStep) return "done"; if(ci===bill.currentStep) return "rejected"; return "waiting"; }
+    if (ci<bill.currentStep) return "done"; if (ci===bill.currentStep) return "current"; return "waiting";
+  };
+  const rejEntry = bill.timeline.find(t=>t.action==="rejected");
+  const approvals = bill.timeline.filter(t=>t.action==="approved"||t.action==="final_approved");
+  const sc = s => s==="done"?C.green:s==="current"?C.gold:s==="rejected"?C.red:C.border;
+  const sb = s => s==="done"?`${C.green}18`:s==="current"?`${C.gold}14`:s==="rejected"?`${C.red}14`:C.faint;
+  const si = (s,icon) => s==="done"?"✓":s==="rejected"?"✗":s==="current"?"…":icon;
+  const statusLabel = bill.status==="approved"?"✅ Fully Approved":bill.status==="rejected"?"❌ Rejected":`⏳ Awaiting ${ROLE_LABEL[bill.approvalChain[bill.currentStep]]}`;
+  const statusColor = bill.status==="approved"?C.green:bill.status==="rejected"?C.red:C.gold;
+
+  return (
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:"4px",padding:"24px",marginBottom:"24px"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"20px"}}>
+        <h3 style={{color:C.gold,fontSize:"12px",letterSpacing:".1em",textTransform:"uppercase",margin:0}}>📍 Bill Journey Tracker</h3>
+        <span style={{fontSize:"13px",fontWeight:"600",color:statusColor}}>{statusLabel}</span>
+      </div>
+      <div style={{display:"flex",alignItems:"flex-start",overflowX:"auto",paddingBottom:"8px"}}>
+        {allSteps.map((step,idx)=>{
+          const state=getState(step,idx);
+          const appr=approvals.find(a=>a.role===step.role);
+          const isLast=idx===allSteps.length-1;
+          return (
+            <div key={step.key} style={{display:"flex",alignItems:"flex-start",flex:isLast?"0 0 auto":"1",minWidth:"100px"}}>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",flex:"0 0 auto",minWidth:"90px"}}>
+                <div style={{width:"48px",height:"48px",borderRadius:"50%",background:sb(state),border:`2px solid ${sc(state)}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px",color:sc(state),fontWeight:"700",boxShadow:state==="current"?`0 0 12px ${C.gold}40`:"none"}}>
+                  {si(state,step.icon)}
+                </div>
+                <div style={{fontSize:"11px",color:state==="waiting"?C.muted:sc(state),textAlign:"center",marginTop:"8px",fontWeight:state==="current"?"700":"400",maxWidth:"90px"}}>{step.label}</div>
+                {state==="done"&&appr&&<div style={{fontSize:"10px",color:C.muted,textAlign:"center",marginTop:"3px"}}>{new Date(appr.timestamp).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}</div>}
+                {state==="done"&&step.key==="submitted"&&<div style={{fontSize:"10px",color:C.muted,textAlign:"center",marginTop:"3px"}}>{new Date(bill.createdAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}</div>}
+                {state==="current"&&<div style={{fontSize:"10px",color:C.gold,textAlign:"center",marginTop:"3px"}}>Awaiting action</div>}
+                {state==="rejected"&&<div style={{fontSize:"10px",color:C.red,textAlign:"center",marginTop:"3px"}}>Rejected here</div>}
+                {state==="waiting"&&<div style={{fontSize:"10px",color:C.muted,textAlign:"center",marginTop:"3px"}}>Not yet reached</div>}
+              </div>
+              {!isLast&&<div style={{flex:1,height:"2px",marginTop:"23px",background:state==="done"?C.green:C.border,minWidth:"20px"}} />}
+            </div>
+          );
+        })}
+      </div>
+      {bill.status==="rejected"&&rejEntry&&(
+        <div style={{marginTop:"20px",background:`${C.red}10`,border:`1px solid ${C.red}40`,borderRadius:"3px",padding:"14px 16px"}}>
+          <div style={{fontSize:"12px",color:C.red,fontWeight:"700",letterSpacing:".06em",textTransform:"uppercase",marginBottom:"6px"}}>❌ Rejected by {rejEntry.by}</div>
+          <div style={{fontSize:"13px",color:C.text,marginBottom:"4px"}}><strong>Reason:</strong> {rejEntry.comment}</div>
+          <div style={{fontSize:"11px",color:C.muted}}>{new Date(rejEntry.timestamp).toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+        </div>
+      )}
+      {bill.status==="approved"&&(
+        <div style={{marginTop:"20px",background:`${C.green}10`,border:`1px solid ${C.green}40`,borderRadius:"3px",padding:"14px 16px"}}>
+          <div style={{fontSize:"12px",color:C.green,fontWeight:"700",marginBottom:"4px"}}>🎉 Bill Fully Sanctioned</div>
+          <div style={{fontSize:"13px",color:C.text}}>All {bill.approvalChain.length} level{bill.approvalChain.length>1?"s":""} completed. ₹{parseFloat(bill.amount).toLocaleString("en-IN")} cleared for payment.</div>
+        </div>
+      )}
+      {bill.status==="pending"&&(
+        <div style={{marginTop:"20px",background:`${C.gold}08`,border:`1px solid ${C.gold}30`,borderRadius:"3px",padding:"14px 16px",display:"flex",alignItems:"center",gap:"12px"}}>
+          <div style={{fontSize:"22px"}}>⏳</div>
+          <div>
+            <div style={{fontSize:"13px",color:C.gold,fontWeight:"600",marginBottom:"2px"}}>Currently with: {ROLE_LABEL[bill.approvalChain[bill.currentStep]]}</div>
+            <div style={{fontSize:"12px",color:C.muted}}>Step {bill.currentStep+1} of {bill.approvalChain.length}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Bill Detail ───────────────────────────────────────────────
+function BillDetail({ billId, user, onBack, onUpdate, S, C }) {
+  const [bill, setBill] = useState(null);
+  const [comment, setComment] = useState("");
+  const [rejectNote, setRejectNote] = useState("");
+  const [showModal, setShowModal] = useState(false);
+
+  const load = () => setBill(getBills().find(x=>x.id===billId)||null);
+  useEffect(()=>{ load(); },[billId]);
+
+  if (!bill) return <div style={{color:C.muted,padding:"40px"}}>Loading…</div>;
+
+  const currentRole = bill.approvalChain[bill.currentStep];
+  const canAct = user.role===currentRole && bill.status==="pending";
+
+  const doApprove = () => {
+    const bills=getBills(), idx=bills.findIndex(b=>b.id===billId);
+    if (idx<0) return;
+    const b={...bills[idx],timeline:[...bills[idx].timeline]};
+    b.timeline.push({action:"approved",by:user.name,role:user.role,timestamp:new Date().toISOString(),comment:comment.trim()||`Approved by ${user.name} (${ROLE_LABEL[user.role]})`});
+    const last=b.currentStep>=b.approvalChain.length-1;
+    if (last) {
+      b.status="approved";
+      b.timeline.push({action:"final_approved",by:"System",role:"system",timestamp:new Date(Date.now()+50).toISOString(),comment:"All approval levels completed. Bill is fully sanctioned."});
+      pushN(b.submittedBy,`🎉 Your bill ${b.id} (₹${parseFloat(b.amount).toLocaleString("en-IN")} | ${b.vendor}) has been FULLY APPROVED.`,b.id,true);
+    } else {
+      b.currentStep+=1;
+      const next=b.approvalChain[b.currentStep];
+      pushN(next,`✅ Bill ${b.id} approved by ${ROLE_LABEL[user.role]}. Requires your approval now.`,b.id);
+      pushN(b.submittedBy,`✅ Your bill ${b.id} was approved by ${ROLE_LABEL[user.role]}. Now awaiting ${ROLE_LABEL[next]}.`,b.id,true);
+    }
+    bills[idx]=b; saveBills(bills); setComment(""); setBill(b); onUpdate();
+  };
+
+  const doReject = () => {
+    if (!rejectNote.trim()) return;
+    const bills=getBills(), idx=bills.findIndex(b=>b.id===billId);
+    if (idx<0) return;
+    const b={...bills[idx],timeline:[...bills[idx].timeline]};
+    b.status="rejected";
+    b.timeline.push({action:"rejected",by:user.name,role:user.role,timestamp:new Date().toISOString(),comment:rejectNote.trim()});
+    pushN(b.submittedBy,`❌ Your bill ${b.id} was REJECTED by ${ROLE_LABEL[user.role]}: "${rejectNote.trim()}"`,b.id,true);
+    bills[idx]=b; saveBills(bills); setShowModal(false); setRejectNote(""); setBill(b); onUpdate();
+  };
+
+  const aColor = a => a.includes("approved")?C.green:a==="rejected"?C.red:a==="submitted"?C.gold:C.muted;
+  const aIcon  = a => a.includes("approved")?"✅":a==="rejected"?"❌":a==="submitted"?"📤":"ℹ️";
+  const sc     = s => s==="approved"?"green":s==="rejected"?"red":"gold";
+
+  return (
+    <div>
+      <button style={{...S.btnSm(""),marginBottom:"20px"}} onClick={onBack}>← Back to Bills</button>
+      <div style={{display:"flex",alignItems:"center",gap:"14px",marginBottom:"28px",flexWrap:"wrap"}}>
+        <div>
+          <h1 style={{...S.pageTitle,margin:0}}>{bill.vendor}</h1>
+          <p style={{color:C.muted,fontFamily:"monospace",fontSize:"13px",margin:"4px 0 0"}}>{bill.id}</p>
+        </div>
+        <span style={S.badge(sc(bill.status))}>{bill.status}</span>
+        <span style={S.badge("")}>{bill.category}</span>
+        <span style={{marginLeft:"auto",fontSize:"24px",fontWeight:"700",color:C.gold}}>₹{parseFloat(bill.amount).toLocaleString("en-IN")}</span>
+      </div>
+      <BillTracker bill={bill} S={S} C={C} />
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"24px"}}>
+        <div style={{display:"flex",flexDirection:"column",gap:"20px"}}>
+          <div style={S.card}>
+            <h3 style={{color:C.gold,fontSize:"12px",letterSpacing:".1em",marginBottom:"14px"}}>BILL DOCUMENT</h3>
+            {bill.imagePreview ? <img src={bill.imagePreview} alt="bill" style={{width:"100%",borderRadius:"3px",maxHeight:"300px",objectFit:"contain",background:C.bg}} /> : <div style={{...S.zone,cursor:"default",color:C.muted}}>No preview</div>}
+            {bill.fileName && <p style={{fontSize:"11px",color:C.muted,marginTop:"8px"}}>📁 {bill.fileName}</p>}
+          </div>
+          <div style={S.card}>
+            <h3 style={{color:C.gold,fontSize:"12px",letterSpacing:".1em",marginBottom:"14px"}}>BILL INFORMATION</h3>
+            {[["Amount",`₹${parseFloat(bill.amount).toLocaleString("en-IN")}`],["Vendor",bill.vendor],["Date",bill.date],["Category",bill.category],["Invoice No.",bill.invoiceNo||"—"],["GST No.",bill.gst||"—"],["Submitted By",`${bill.submittedByName} (${bill.submittedByCompany})`],["OCR Confidence",bill.ocrConfidence],["Notes",bill.notes||"—"]].map(([k,v])=>(
+              <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.statBorder}`}}>
+                <span style={{color:C.muted,fontSize:"13px"}}>{k}</span>
+                <span style={{color:C.text,fontSize:"13px",textAlign:"right",maxWidth:"58%"}}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:"20px"}}>
+          <div style={S.card}>
+            <h3 style={{color:C.gold,fontSize:"12px",letterSpacing:".1em",marginBottom:"18px"}}>APPROVAL WORKFLOW</h3>
+            <div style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"24px",flexWrap:"wrap"}}>
+              {bill.approvalChain.map((role,i)=>{
+                const done=bill.status==="approved"||i<bill.currentStep;
+                const cur=i===bill.currentStep&&bill.status==="pending";
+                const rej=bill.status==="rejected"&&i===bill.currentStep;
+                return (
+                  <div key={role} style={{display:"flex",alignItems:"center",gap:"6px"}}>
+                    <div style={{textAlign:"center"}}>
+                      <div style={{width:"42px",height:"42px",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"16px",background:done?`${C.green}20`:cur?`${C.gold}18`:rej?`${C.red}18`:C.faint,border:`2px solid ${done?C.green:cur?C.gold:rej?C.red:C.border}`}}>
+                        {done?"✓":rej?"✗":cur?"…":"○"}
+                      </div>
+                      <div style={{fontSize:"10px",color:C.muted,textTransform:"uppercase",marginTop:"4px"}}>{ROLE_LABEL[role]}</div>
+                    </div>
+                    {i<bill.approvalChain.length-1&&<div style={{width:"28px",height:"1px",background:done?C.green:C.border,marginBottom:"16px"}} />}
+                  </div>
+                );
+              })}
+            </div>
+            {canAct && (
+              <div>
+                <label style={S.label}>Approval Comment (optional)</label>
+                <textarea style={{...S.input,minHeight:"72px",resize:"vertical",marginBottom:"12px"}} value={comment} onChange={e=>setComment(e.target.value)} placeholder="Add a note…" />
+                <div style={{display:"flex",gap:"10px"}}>
+                  <button style={{...S.btnSm("green"),flex:1,padding:"13px",fontSize:"13px"}} onClick={doApprove}>✅ Approve</button>
+                  <button style={{...S.btnSm("red"),  flex:1,padding:"13px",fontSize:"13px"}} onClick={()=>setShowModal(true)}>❌ Reject</button>
+                </div>
+              </div>
+            )}
+            {!canAct&&bill.status==="pending"&&<div style={S.alert("info")}>⏳ Awaiting <strong>{ROLE_LABEL[currentRole]}</strong>.{user.role!==currentRole&&` You will be notified when it reaches your stage.`}</div>}
+            {bill.status==="approved"&&<div style={S.alert("success")}>🎉 Fully approved through all required levels.</div>}
+            {bill.status==="rejected"&&<div style={S.alert("error")}>❌ Rejected. See audit trail for reason.</div>}
+          </div>
+          <div style={S.card}>
+            <h3 style={{color:C.gold,fontSize:"12px",letterSpacing:".1em",marginBottom:"18px"}}>AUDIT TRAIL</h3>
+            <div style={{position:"relative"}}>
+              {bill.timeline.map((e,i)=>(
+                <div key={i} style={{position:"relative",paddingLeft:"26px",paddingBottom:i<bill.timeline.length-1?"20px":0}}>
+                  {i<bill.timeline.length-1&&<div style={{position:"absolute",left:"8px",top:"14px",bottom:0,width:"1px",background:C.border}} />}
+                  <div style={{position:"absolute",left:"2px",top:"3px",width:"12px",height:"12px",borderRadius:"50%",background:aColor(e.action)}} />
+                  <div style={{fontSize:"11px",color:aColor(e.action),textTransform:"uppercase",letterSpacing:".07em",marginBottom:"2px"}}>{aIcon(e.action)} {e.action.replace(/_/g," ")}</div>
+                  <div style={{fontSize:"13px",color:C.text,marginBottom:"3px"}}>{e.comment}</div>
+                  <div style={{fontSize:"11px",color:C.muted}}>{e.by!=="System"?`${e.by} · ${ROLE_LABEL[e.role]||e.role} · `:"System · "}{new Date(e.timestamp).toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+      {showModal && (
+        <div style={S.modal} onClick={()=>setShowModal(false)}>
+          <div style={S.modalCard} onClick={e=>e.stopPropagation()}>
+            <h3 style={{color:C.red,marginBottom:"10px"}}>❌ Reject This Bill</h3>
+            <p style={{color:C.muted,fontSize:"14px",marginBottom:"20px"}}>A rejection reason is <strong>mandatory</strong> and will be permanently recorded.</p>
+            <label style={S.label}>Rejection Reason *</label>
+            <textarea style={{...S.input,minHeight:"110px",marginBottom:"16px"}} value={rejectNote} onChange={e=>setRejectNote(e.target.value)} placeholder="e.g. Duplicate bill. Amount exceeds policy limit. GST invoice missing." />
+            {!rejectNote.trim()&&<div style={S.alert("error")}>Reason is required before you can reject.</div>}
+            <div style={{display:"flex",gap:"10px"}}>
+              <button style={{...S.btnSm("red"),flex:1,padding:"12px"}} onClick={doReject}>Confirm Rejection</button>
+              <button style={{...S.btnSm(""),   flex:1,padding:"12px"}} onClick={()=>setShowModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Dashboard ─────────────────────────────────────────────────
+function Dashboard({ user, onNavigate, refreshKey, S, C }) {
+  const [bills, setBills] = useState([]);
+  useEffect(()=>{ const all=getBills(); setBills(["client","supplier"].includes(user.role)?all.filter(b=>b.submittedBy===user.id):all); },[user,refreshKey]);
+
+  const pending=bills.filter(b=>b.status==="pending"), approved=bills.filter(b=>b.status==="approved"), rejected=bills.filter(b=>b.status==="rejected");
+  const myQueue=bills.filter(b=>b.status==="pending"&&b.approvalChain[b.currentStep]===user.role);
+
+  return (
+    <div>
+      <h1 style={S.pageTitle}>Welcome, {user.name}</h1>
+      <p style={S.pageSub}>{user.company} · <span style={S.badge("gold")}>{user.role}</span></p>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"16px",marginBottom:"28px"}}>
+        {[["Total",bills.length,C.gold],["Pending",pending.length,C.gold],["Approved",approved.length,C.green],["Rejected",rejected.length,C.red]].map(([l,v,c])=>(
+          <div key={l} style={S.statCard(c)}><div style={S.statNum}>{v}</div><div style={S.statLbl}>{l}</div></div>
+        ))}
+      </div>
+      {myQueue.length>0&&(
+        <div style={{...S.alert("warn"),fontSize:"14px",marginBottom:"24px"}}>
+          🔔 <strong>{myQueue.length}</strong> bill(s) awaiting your approval as <strong>{ROLE_LABEL[user.role]}</strong>.
+          <button style={{...S.btnSm("gold"),marginLeft:"12px",padding:"4px 14px"}} onClick={()=>onNavigate("bills")}>Review Now</button>
+        </div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"24px"}}>
+        <div style={S.card}>
+          <h3 style={{color:C.gold,fontSize:"12px",letterSpacing:".1em",marginBottom:"16px"}}>RECENT BILLS</h3>
+          {bills.slice(0,6).length===0
+            ? <p style={{color:C.muted,fontSize:"14px"}}>No bills yet. <button style={{...S.btnSm("gold"),padding:"4px 12px"}} onClick={()=>onNavigate("upload")}>Upload now</button></p>
+            : bills.slice(0,6).map(b=>(
+              <div key={b.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${C.statBorder}`}}>
+                <div><div style={{fontSize:"14px"}}>{b.vendor}</div><div style={{fontSize:"11px",color:C.muted}}>{b.category} · {b.date}</div></div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontWeight:"700",fontSize:"14px"}}>₹{parseFloat(b.amount).toLocaleString("en-IN")}</div>
+                  <span style={S.badge(b.status==="approved"?"green":b.status==="rejected"?"red":"gold")}>{b.status}</span>
+                </div>
+              </div>
+            ))
+          }
+        </div>
+        <div style={S.card}>
+          <h3 style={{color:C.gold,fontSize:"12px",letterSpacing:".1em",marginBottom:"16px"}}>QUICK ACTIONS</h3>
+          <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
+            {["client","supplier"].includes(user.role)&&<button style={{...S.btnSm("gold"),padding:"14px",fontSize:"14px"}} onClick={()=>onNavigate("upload")}>📤 Upload New Bill</button>}
+            <button style={{...S.btnSm(""),padding:"14px",fontSize:"14px"}} onClick={()=>onNavigate("bills")}>📋 View All Bills</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Root ──────────────────────────────────────────────────────
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [page, setPage] = useState("dashboard");
+  const [viewingId, setViewingId] = useState(null);
+  const [highlightId, setHighlightId] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [dark, setDark] = useState(true);
+
+  const C = dark ? DARK : LIGHT;
+  const S = makeStyles(C);
+
+  const refresh = () => setRefreshKey(k=>k+1);
+  const navigate = (pg, billId=null) => { setPage(pg); setViewingId(null); if (billId) { setHighlightId(billId); setViewingId(billId); } };
+
+  const sharedProps = { S, C };
+
+  if (!user) return (
+    <div style={S.app}>
+      <style>{`*{margin:0;padding:0;box-sizing:border-box}`}</style>
+      <LoginPage onLogin={setUser} dark={dark} onToggleTheme={()=>setDark(d=>!d)} />
+    </div>
+  );
+
+  const navPages = ["dashboard","bills",...(["client","supplier"].includes(user.role)?["upload"]:[])];
+
+  return (
+    <div style={S.app}>
+      <style>{`*{margin:0;padding:0;box-sizing:border-box}button:hover{opacity:.84}input:focus,textarea:focus{outline:none;border-color:${C.gold}!important}`}</style>
+      <nav style={S.nav}>
+        <span style={S.navBrand}>📋 ExpenseTrack</span>
+        <div style={{display:"flex",gap:"8px"}}>
+          {navPages.map(p=>(
+            <button key={p} style={{...S.btnSm(page===p?"gold":""),textTransform:"capitalize"}} onClick={()=>{setPage(p);setViewingId(null)}}>{p}</button>
+          ))}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:"12px"}}>
+          <ThemeToggle dark={dark} onToggle={()=>setDark(d=>!d)} S={S} />
+          <NotifBell user={user} onNavigate={navigate} tick={refreshKey} S={S} C={C} />
+          <span style={{fontSize:"13px",color:C.muted}}>{user.name}</span>
+          <span style={S.badge("gold")}>{user.role}</span>
+          <button style={S.btnSm("")} onClick={()=>setUser(null)}>Sign Out</button>
+        </div>
+      </nav>
+      <main style={S.main}>
+        {viewingId ? (
+          <BillDetail billId={viewingId} user={user} onBack={()=>setViewingId(null)} onUpdate={refresh} {...sharedProps} />
+        ) : page==="dashboard" ? (
+          <Dashboard user={user} onNavigate={navigate} refreshKey={refreshKey} {...sharedProps} />
+        ) : page==="upload" ? (
+          <UploadBill user={user} onBillSubmitted={()=>{refresh();setPage("bills");}} {...sharedProps} />
+        ) : (
+          <BillsList user={user} onViewBill={id=>setViewingId(id)} refreshKey={refreshKey} highlightId={highlightId} {...sharedProps} />
+        )}
+      </main>
+    </div>
+  );
+}
